@@ -17,6 +17,8 @@
   ],
   "scripts": {
     "build": "rimraf dist && rollup -c rollup.config.js",
+    "check:dist": "node scripts/check-dist.js",
+    "prepublishOnly": "node scripts/check-dist.js",
     "release": "node scripts/publish.js"
   },
   "keywords": [
