@@ -48,14 +48,26 @@ export function stableStringify(value: unknown): string {
   return `{${entries.join(',')}}`;
 }
 
-type PendingConfig = AxiosRequestConfig & { requestKey?: string };
+type PendingConfig = AxiosRequestConfig & {
+  requestKey?: string;
+  /** 内部字段：本请求独占的 AbortController，与去重登记解耦，便于 cancelAll 覆盖未进拦截器的请求 */
+  __controller?: AbortController;
+};
 
 /**
  * 重复请求取消处理器
  * 基于 AbortController 维护 pending 请求，同 key 后发请求取消先前请求
+ *
+ * 两级登记：
+ * - activeControllers：请求一发出就登记（早于请求拦截器），cancelAll 依赖它覆盖
+ *   尚未进入拦截器、以及 dedupe: false 而不会进 pendingMap 的请求
+ * - pendingMap：请求进入拦截器且开启去重后才登记，仅用于同 key 互斥
  */
 export class CancelHandler {
   private pendingMap: Map<string, AbortController> = new Map();
+
+  /** 所有已发出且尚未结束的请求控制器 */
+  private activeControllers: Set<AbortController> = new Set();
 
   /**
    * 生成请求的唯一 Key
@@ -66,14 +78,29 @@ export class CancelHandler {
   }
 
   /**
+   * 请求发出时登记控制器
+   *
+   * 复用 config 上已有的控制器，保证去重与 cancelAll 操作的是同一个 signal；
+   * 放在拦截器之前调用，才能覆盖「已发出但还没进拦截器」的请求。
+   */
+  track(config: PendingConfig): AbortController {
+    let controller = config.__controller;
+    if (!controller) {
+      controller = new AbortController();
+      config.__controller = controller;
+      config.signal = controller.signal;
+    }
+    this.activeControllers.add(controller);
+    return controller;
+  }
+
+  /**
    * 将请求加入挂起映射（同 key 旧请求会被取消）
    */
   addPending(config: PendingConfig): void {
     this.removePending(config);
     const key = this.getRequestKey(config);
-    const controller = new AbortController();
-    config.signal = controller.signal;
-    this.pendingMap.set(key, controller);
+    this.pendingMap.set(key, this.track(config));
   }
 
   /**
@@ -85,22 +112,31 @@ export class CancelHandler {
     if (controller) {
       controller.abort();
       this.pendingMap.delete(key);
+      this.activeControllers.delete(controller);
     }
   }
 
   /**
-   * 仅移除不取消（请求正常完成后调用）
+   * 请求结束：注销去重登记与活跃登记（正常返回、业务失败、取消都需调用）
    */
-  clearPending(config: PendingConfig): void {
-    const key = this.getRequestKey(config);
-    this.pendingMap.delete(key);
+  release(config: PendingConfig): void {
+    this.pendingMap.delete(this.getRequestKey(config));
+    this.untrack(config);
   }
 
   /**
-   * 取消所有挂起请求
+   * 仅注销活跃登记（未开启去重的请求结束时调用，省去生成去重 key）
+   */
+  untrack(config: PendingConfig): void {
+    if (config.__controller) this.activeControllers.delete(config.__controller);
+  }
+
+  /**
+   * 取消所有已发出的请求（含尚未进入拦截器、未开启去重的请求）
    */
   removeAllPending(): void {
-    this.pendingMap.forEach((controller) => controller.abort());
+    this.activeControllers.forEach((controller) => controller.abort());
+    this.activeControllers.clear();
     this.pendingMap.clear();
   }
 }

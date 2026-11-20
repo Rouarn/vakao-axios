@@ -79,9 +79,10 @@ export function createClient(config: ClientConfig = {}): RequestClient {
     if (loadingCount === 0) onLoading?.(false);
   };
 
-  /** 请求终结统一处理：清理去重登记 + 关闭 loading */
+  /** 请求终结统一处理：注销去重/活跃登记 + 关闭 loading */
   const settleRequest = (c: InternalConfig): void => {
-    if (c.dedupe !== false) cancelHandler.clearPending(c);
+    if (c.dedupe !== false) cancelHandler.release(c);
+    else cancelHandler.untrack(c);
     if (c.loading) stopLoading();
   };
 
@@ -198,6 +199,8 @@ export function createClient(config: ClientConfig = {}): RequestClient {
         const ok = await runRefresh();
         if (ok) {
           c.__isRetryAfterRefresh = true;
+          // 重放同样是一次尚未进入拦截器的请求，重新登记后才能被 cancelAll 取消
+          cancelHandler.track(c);
           return instance.request(c);
         }
       }
@@ -270,8 +273,11 @@ export function createClient(config: ClientConfig = {}): RequestClient {
     } as InternalConfig;
   }
 
-  const send = <T>(c: InternalConfig): Promise<T> =>
-    instance.request<unknown, T>(c as AxiosRequestConfig);
+  const send = <T>(c: InternalConfig): Promise<T> => {
+    // 发出即登记：cancelAll 必须能取消尚未进入请求拦截器的请求
+    cancelHandler.track(c);
+    return instance.request<unknown, T>(c as AxiosRequestConfig);
+  };
 
   const withQuery =
     (method: string) =>
