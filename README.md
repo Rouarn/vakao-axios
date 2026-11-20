@@ -1,6 +1,6 @@
 # @vakao/axios
 
-开箱即用、类型安全的 Axios 封装库（v1.0，不兼容 0.x）。内置后端信封解包、401 单例刷新并重放原请求、重复请求取消、全局 loading 计数与统一错误出口。
+开箱即用、类型安全的 Axios 封装库（v0.0.2）。内置后端信封解包、401 单例刷新并重放原请求、重复请求取消、全局 loading 计数与统一错误出口。
 
 ## 特性
 
@@ -85,7 +85,7 @@ const { url } = await request.upload<{ url: string }>("/upload", form);
 // 下载（返回 Blob）
 const blob = await request.download("/export", { id: 1 });
 
-// 取消所有请求
+// 取消所有已发出的请求（含尚未进入拦截器、dedupe: false 的请求）
 request.cancelAll();
 ```
 
@@ -188,6 +188,16 @@ class RequestError extends Error {
   // message 为 axios 原始信息（business 错误为空串），不要直接当作用户文案
 }
 ```
+
+## 开发
+
+```bash
+pnpm build            # 构建 dist/index.js、dist/index.js.map 与 dist/types
+pnpm run check:dist   # 校验 dist 与 src 是否同步
+```
+
+`check:dist` 会把源码重新构建到临时目录，再与当前 `dist` 逐文件比对内容；不一致时列出差异并以非 0 退出。
+它已挂到 `prepublishOnly`，`pnpm run release` / `npm publish` 前自动执行，避免发布过期产物。
 
 ## License
 
